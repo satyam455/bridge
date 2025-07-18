@@ -1,0 +1,16 @@
+{
+    "name": "bridge-scripts",
+    "version": "1.0.0",
+    "description": "Bridge testing scripts",
+    "main": "test-bridge.js",
+    "scripts": {
+        "init": "node test-bridge.js init",
+        "lock": "node test-bridge.js lock",
+        "status": "node test-bridge.js status"
+    },
+    "dependencies": {
+        "@coral-xyz/anchor": "^0.31.1",
+        "@solana/web3.js": "^1.87.6"
+    },
+    "type": "commonjs"
+}
