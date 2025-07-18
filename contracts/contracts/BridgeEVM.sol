@@ -9,12 +9,20 @@ contract BridgeEVM is Ownable, ReentrancyGuard {
     IERC20 public bridgeToken;
     
     // Track processed Solana transactions to prevent double spending
-    mapping(bytes32 => bool) public processedTxs;
+    // For Solana -> Sepolia direction (release)
+    mapping(bytes32 => bool) public processedSolanaToSepoliaTxs;
+    
+    // Track processed Sepolia transactions to prevent double spending  
+    // For Sepolia -> Solana direction (lock)
+    mapping(bytes32 => bool) public processedSepoliaToSolanaTxs;
     
     // Events
     event Released(address indexed recipient, uint256 amount, bytes32 indexed solanaTxHash, uint256 timestamp);
     event TokenDeposited(address indexed from, uint256 amount, uint256 timestamp);
     event EmergencyWithdraw(address indexed to, uint256 amount, uint256 timestamp);
+    
+    // New event for reverse bridge (Sepolia -> Solana)
+    event Locked(address indexed from, uint256 amount, string indexed solanaAddress, uint256 timestamp);
     
     // Errors
     error TransactionAlreadyProcessed();
@@ -22,6 +30,7 @@ contract BridgeEVM is Ownable, ReentrancyGuard {
     error InvalidRecipient();
     error InsufficientBalance();
     error TransferFailed();
+    error InvalidSolanaAddress();
     
     constructor(address _bridgeToken, address _owner) Ownable(_owner) {
         require(_bridgeToken != address(0), "Invalid token address");
@@ -41,14 +50,14 @@ contract BridgeEVM is Ownable, ReentrancyGuard {
     ) external onlyOwner nonReentrant {
         if (to == address(0)) revert InvalidRecipient();
         if (amount == 0) revert InvalidAmount();
-        if (processedTxs[solanaTxHash]) revert TransactionAlreadyProcessed();
+        if (processedSolanaToSepoliaTxs[solanaTxHash]) revert TransactionAlreadyProcessed();
         
         // Check bridge has sufficient balance
         uint256 balance = bridgeToken.balanceOf(address(this));
         if (balance < amount) revert InsufficientBalance();
         
         // Mark transaction as processed
-        processedTxs[solanaTxHash] = true;
+        processedSolanaToSepoliaTxs[solanaTxHash] = true;
         
         // Transfer tokens to recipient
         bool success = bridgeToken.transfer(to, amount);
@@ -57,6 +66,35 @@ contract BridgeEVM is Ownable, ReentrancyGuard {
         emit Released(to, amount, solanaTxHash, block.timestamp);
     }
     
+    /**
+     * @dev Lock BTK tokens for bridging to Solana (Reverse direction)
+     * @param amount Amount of BTK tokens to lock
+     * @param solanaAddress Destination Solana address (base58 string)
+     */
+    function lock(
+        uint256 amount,
+        string calldata solanaAddress
+    ) external nonReentrant {
+        if (amount == 0) revert InvalidAmount();
+        if (bytes(solanaAddress).length < 32 || bytes(solanaAddress).length > 44) {
+            revert InvalidSolanaAddress();
+        }
+        
+        // Transfer BTK tokens from user to bridge
+        bool success = bridgeToken.transferFrom(msg.sender, address(this), amount);
+        if (!success) revert TransferFailed();
+        
+        emit Locked(msg.sender, amount, solanaAddress, block.timestamp);
+    }
+    
+    /**
+     * @dev Mark a Sepolia transaction as processed (for reverse bridge)
+     * @param sepoliaTxHash Transaction hash from Sepolia lock event
+     */
+    function markSepoliaTransactionProcessed(bytes32 sepoliaTxHash) external onlyOwner {
+        processedSepoliaToSolanaTxs[sepoliaTxHash] = true;
+    }
+
     /**
      * @dev Deposit tokens to the bridge (for funding)
      * @param amount Amount to deposit
@@ -96,9 +134,16 @@ contract BridgeEVM is Ownable, ReentrancyGuard {
     }
     
     /**
-     * @dev Check if Solana transaction has been processed
+     * @dev Check if Solana->Sepolia transaction has been processed
      */
-    function isTransactionProcessed(bytes32 solanaTxHash) external view returns (bool) {
-        return processedTxs[solanaTxHash];
+    function isSolanaToSepoliaTransactionProcessed(bytes32 solanaTxHash) external view returns (bool) {
+        return processedSolanaToSepoliaTxs[solanaTxHash];
+    }
+    
+    /**
+     * @dev Check if Sepolia->Solana transaction has been processed
+     */
+    function isSepoliaToSolanaTransactionProcessed(bytes32 sepoliaTxHash) external view returns (bool) {
+        return processedSepoliaToSolanaTxs[sepoliaTxHash];
     }
 }

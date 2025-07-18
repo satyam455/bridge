@@ -18,7 +18,7 @@ pub mod bridge {
         Ok(())
     }
 
-    /// Lock SOL tokens and emit event for indexer
+    /// Lock SOL tokens and emit event for indexer (Solana -> Sepolia)
     pub fn lock(
         ctx: Context<Lock>,
         amount: u64,
@@ -71,6 +71,60 @@ pub mod bridge {
         Ok(())
     }
 
+    /// Release SOL tokens to user after BTK is locked on EVM (Sepolia -> Solana)
+    pub fn release(
+        ctx: Context<Release>,
+        amount: u64,
+        evm_tx_hash: String, // EVM transaction hash as string
+        recipient: Pubkey
+    ) -> Result<()> {
+        let bridge_state = &mut ctx.accounts.bridge_state;
+
+        // Validate amount
+        require!(amount > 0, BridgeError::InvalidAmount);
+        require!(amount <= 1_000_000_000, BridgeError::AmountTooLarge); // Max 1 SOL per tx
+
+        // Check if transaction already processed
+        let processed_tx = &mut ctx.accounts.processed_tx;
+        require!(!processed_tx.is_processed, BridgeError::TransactionAlreadyProcessed);
+
+        // Validate admin has sufficient SOL balance
+        let admin_balance = ctx.accounts.admin.lamports();
+        require!(admin_balance >= amount, BridgeError::InsufficientBalance);
+
+        // Transfer SOL from admin to recipient
+        **ctx.accounts.admin.to_account_info().try_borrow_mut_lamports()? -= amount;
+        **ctx.accounts.recipient.to_account_info().try_borrow_mut_lamports()? += amount;
+
+        // Mark transaction as processed
+        processed_tx.is_processed = true;
+        processed_tx.evm_tx_hash = evm_tx_hash.clone();
+        processed_tx.amount = amount;
+        processed_tx.recipient = recipient;
+        processed_tx.timestamp = Clock::get()?.unix_timestamp;
+
+        // Update bridge state
+        bridge_state.total_locked = bridge_state.total_locked.checked_sub(amount)
+            .ok_or(BridgeError::MathUnderflow)?;
+
+        // Emit event for tracking
+        emit!(ReleaseEvent {
+            recipient,
+            amount,
+            evm_tx_hash: evm_tx_hash.clone(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        msg!(
+            "Released {} lamports to {} for EVM tx {}",
+            amount,
+            recipient,
+            evm_tx_hash
+        );
+
+        Ok(())
+    }
+
 }
 
 #[derive(Accounts)]
@@ -107,6 +161,38 @@ pub struct Lock<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+#[instruction(amount: u64, evm_tx_hash: String)]
+pub struct Release<'info> {
+    #[account(
+        mut,
+        seeds = [b"bridge_state"],
+        bump = bridge_state.bump
+    )]
+    pub bridge_state: Account<'info, BridgeState>,
+    
+    #[account(
+        mut,
+        constraint = admin.key() == bridge_state.admin @ BridgeError::InvalidAdmin
+    )]
+    pub admin: Signer<'info>,
+    
+    /// CHECK: Recipient account where SOL will be sent
+    #[account(mut)]
+    pub recipient: AccountInfo<'info>,
+    
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + ProcessedTransaction::INIT_SPACE,
+        seeds = [b"processed_tx", evm_tx_hash.as_bytes()],
+        bump
+    )]
+    pub processed_tx: Account<'info, ProcessedTransaction>,
+    
+    pub system_program: Program<'info, System>,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct BridgeState {
@@ -115,11 +201,30 @@ pub struct BridgeState {
     pub bump: u8,
 }
 
+#[account]
+#[derive(InitSpace)]
+pub struct ProcessedTransaction {
+    pub is_processed: bool,
+    #[max_len(66)] // EVM tx hash with 0x prefix
+    pub evm_tx_hash: String,
+    pub amount: u64,
+    pub recipient: Pubkey,
+    pub timestamp: i64,
+}
+
 #[event]
 pub struct LockEvent {
     pub source_address: Pubkey,
     pub destination_address: String,
     pub amount: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct ReleaseEvent {
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub evm_tx_hash: String,
     pub timestamp: i64,
 }
 
@@ -133,6 +238,12 @@ pub enum BridgeError {
     InvalidDestinationAddress,
     #[msg("math overflow")]
     MathOverflow,
+    #[msg("Math underflow")]
+    MathUnderflow,
     #[msg("Invalid admin authority")]
     InvalidAdmin,
+    #[msg("Transaction already processed")]
+    TransactionAlreadyProcessed,
+    #[msg("Insufficient balance")]
+    InsufficientBalance,
 }

@@ -5,8 +5,8 @@ async function main() {
     console.log("================================\n");
 
     // Contract addresses from deployment
-    const BRIDGE_CONTRACT = "0x9899B1DBB12769a52d3B56955F0B5a2c7d46FbdE";
-    const TOKEN_CONTRACT = "0xBF882e30001d6FE0537eEA26691a13d00b74353C";
+    const BRIDGE_CONTRACT = "0xE40eaa9DdDA5126d3C7a3BDA27D216e69bd67d97";
+    const TOKEN_CONTRACT = "0x683dB3BD882864C9c12E93747050EC6d093B1A72";
     const USER_ADDRESS = "0xB4d1cC3386a83c70972E9f9095dDB9D494BF7EAE";
 
     // Get provider and contracts
