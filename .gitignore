@@ -5,3 +5,17 @@ target
 node_modules
 test-ledger
 .yarn
+
+# Environment files (NEVER commit these!)
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+**/.env
+**/.env.*
+
+# Private keys and secrets
+*.key
+*.pem
+private_keys/
